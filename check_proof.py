@@ -57,6 +57,10 @@ checkedInferenceCounter = 0
 for line in lines:
 	linenumber += 1
 	sanityCounter = 0
+
+	if line == "\n" or re.match(r"//.*",line): # if line is empty or starts with //, continue
+		continue
+
 	proofAxiom = re.search(r"([0-9]+)\.(.*)\[axiom\]", line)
 	proofStepUnary = re.search(r"([0-9]+)\.(.*)\[([0-9]+)\]", line)
 	proofStepBinary = re.search(r"([0-9]+)\.(.*)\[([0-9]+),([0-9]+)\]", line)

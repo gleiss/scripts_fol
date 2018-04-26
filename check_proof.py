@@ -1,111 +1,139 @@
 # This script checks whether the given proof is correct.
 # Use the same format for writing proofs as Vampire's output, 
-# but use at the end
-# 	[axiom] for all proof steps without parents
-# 	[number] for all unary proof steps
-# 	[number, number] for all binary proof steps
-# 	(no other steps are allowed)
+# but use at the end of each line either
+# 	[axiom] for all axioms of the proof
+# 	[number1, ..., numberN] for all N-ary proof steps (N >= 0)
 #  	
 #  	Example:
 # 	1. a=0 [axiom]
 # 	3. a=0 => b=0 [axiom]
+#	5. b=0 => f(b) = f(0) []
 # 	6. b=0 [3,1]
-# 	9. $greatereq(b,0) [6]
+# 	9. f(b)=f(0) [1,3,5]
 # 
-# furthermore declare all symbols used in any step in the header variable in this file
+# furthermore declare all symbols used in any step before asserting proof axioms and steps.
 
-import re
-import os
-
-proofFilepath = "/Users/bernhard/Desktop/proof.vout"
-vampire_exec = "/Users/bernhard/repos/vampire/build_xcode/bin/Debug/vampire"
+vampire_exec = "vampire"
 temp_file_path_tptp = "/Users/bernhard/Desktop/test.tptp"
 temp_file_path_vout = "/Users/bernhard/Desktop/test.vout"
-header = """tff(a_type, type, a : $int).
-tff(b_type, type, b : $int).\n
-"""
 
-def dumpUnaryProofStep(premise, conclusion):
-	string = "tff(premise, axiom," + premise + ").\n"
-	string += "tff(conclusion, conjecture," + conclusion + ").\n"
+import os
+import argparse
+import re
+
+class InferenceStep:
+	def __init__(self, isAxiom, premiseIDs, conclusionID, conclusion):
+		assert ((not isAxiom) or len(premiseIDs)==0)
+		self.isAxiom = isAxiom
+		self.premiseIDs = premiseIDs
+		self.conclusionID = conclusionID
+		self.conclusion = conclusion
+
+
+def parseAxiom(line):
+	proofAxiom = re.search(r"([0-9]+)\.(.*)\[axiom\]", line)
+	if proofAxiom:
+		return InferenceStep(True,[], proofAxiom.group(1), proofAxiom.group(2))
+	else:
+		return None
+
+def constructRegexForStepOfArity(arity):
+	# construct regex
+	regex = r"([0-9]+)\.(.*)\["
+	for argument in range(0,arity):
+		regex += r"([0-9]+)"
+		if argument != arity-1:
+			regex += r","
+	regex += r"\]"
+	return regex
+
+def parseStep(line):
+	for arity in range(0,10):
+
+		# search for regex
+		regex = constructRegexForStepOfArity(arity)
+		proofStep = re.search(regex, line)
+
+		# if found, return InferenceStep
+		if proofStep:
+			premiseIDs = []
+			for argument in range (0,arity):
+				premiseID = proofStep.group(3 + argument)
+				premiseIDs.append(premiseID)
+			return InferenceStep(False, premiseIDs,	proofStep.group(1), proofStep.group(2))
+	return None
+
+def encodeValidityOfStep(header, step, numberToConclusion):
+	string = header + "\n"
+	for premiseID in step.premiseIDs:
+		assert premiseID in numberToConclusion, "There is no step with ID " + str(premiseID)
+		string += "tff(premise, axiom," + numberToConclusion[premiseID] + ").\n"
+	string += "tff(conclusion, conjecture," + step.conclusion + ").\n"
 	return string
 
-def dumpBinaryProofStep(premise1, premise2, conclusion):
-	string = "tff(premise, axiom," + premise1 + ").\n"
-	string += "tff(premise, axiom," + premise2 + ").\n"
-	string += "tff(conclusion, conjecture," + conclusion + ").\n"
-	return string
-
-def doProving(encoding):
-	file = open(temp_file_path_tptp,"w") 
- 	file.write(header + encoding)
+def prove(encoding):
+	file = open(temp_file_path_tptp,"w")
+ 	file.write(encoding)
  	file.close()
 
  	os.system(vampire_exec + " " + temp_file_path_tptp + " > " + temp_file_path_vout)
 
- 	# check whether proof was found and update stats
+ 	# check whether proof was found
 	vampire_out_file = open(temp_file_path_vout, 'r')
 	firstLine = vampire_out_file.readline()
 	return (firstLine == "% Refutation found. Thanks to Tanya!\n")
 
-lines = open(proofFilepath, 'r').readlines()
+def main():
+	parser = argparse.ArgumentParser()
+	parser.add_argument("-f", "--filepath", help = "the filepath of the proof which should be checked", required=True, dest='filepath')
+	filepath = parser.parse_args().filepath
 
-numberToConclusion = {}
-linenumber = 0
-checkedInferenceCounter = 0
+	lines = open(filepath, 'r').readlines()
 
-for line in lines:
-	linenumber += 1
-	sanityCounter = 0
+	numberToConclusion = {}
+	linenumber = 0 # used to report the correct linenumber in assertions
+	checkedInferenceCounter = 0 # used to report the number of checked inferences
+	header = "" # collects the type declarations written in the proof file
 
-	if line == "\n" or re.match(r"//.*",line): # if line is empty or starts with //, continue
-		continue
+	for line in lines:
+		linenumber += 1
 
-	proofAxiom = re.search(r"([0-9]+)\.(.*)\[axiom\]", line)
-	proofStepUnary = re.search(r"([0-9]+)\.(.*)\[([0-9]+)\]", line)
-	proofStepBinary = re.search(r"([0-9]+)\.(.*)\[([0-9]+),([0-9]+)\]", line)
+ 		# if line is empty or starts with //, ignore it
+		if line == "\n" or re.match(r"//.*",line):
+			continue
+		# try to parse line as tptp-type declaration
+		if re.match(r"tff.*, type,",line):
+			header += line
+			continue
 
-	if proofAxiom:
-		sanityCounter += 1
-		conclusionID = proofAxiom.group(1)
-		conclusion = proofAxiom.group(2)
-		numberToConclusion[conclusionID] = conclusion	
+		# try to parse line as proof axiom
+		axiom = parseAxiom(line)
+		if axiom != None:
+			# save conclusion
+			numberToConclusion[axiom.conclusionID] = axiom.conclusion
+			continue
+			
+		# try to parse line as proof step with 0,1,...,10 premises
+		step = parseStep(line)
+		if step != None:
 
-	if proofStepUnary:
-		sanityCounter += 1
-		conclusionID = proofStepUnary.group(1)
-		conclusion = proofStepUnary.group(2)
-		premiseID = proofStepUnary.group(3)
-		numberToConclusion[conclusionID] = conclusion
+			# save conclusion
+			numberToConclusion[step.conclusionID] = step.conclusion
+
+			# encode validity of step
+			encoding = encodeValidityOfStep(header, step, numberToConclusion)
 		
-		assert premiseID in numberToConclusion, "There is no step with ID " + str(premiseID)
-		encoding = dumpUnaryProofStep(numberToConclusion[premiseID], conclusion)
-		success = doProving(encoding)
-		if success:
-			checkedInferenceCounter += 1
-		else:
-			assert False, "Check for step " + conclusionID + " failed!"
-
-
-	if proofStepBinary:
-		sanityCounter += 1
-		conclusionID = proofStepBinary.group(1)
-		conclusion = proofStepBinary.group(2)
-		premise1ID = proofStepBinary.group(3)
-		premise2ID = proofStepBinary.group(4)
-		numberToConclusion[conclusionID] = conclusion
+			# prove that encoded step is sound
+			success = prove(encoding)
+			if success:
+				checkedInferenceCounter += 1
+			else:
+				assert False, "Check for step " + conclusionID + " failed!"
+			continue
 		
-		assert premise1ID in numberToConclusion, "There is no step with ID " + str(premise1ID)
-		assert premise2ID in numberToConclusion, "There is no step with ID " + str(premise2ID)
-		encoding = dumpBinaryProofStep(numberToConclusion[premise1ID], numberToConclusion[premise2ID], conclusion)
-		success = doProving(encoding)
-		if success:
-			checkedInferenceCounter += 1
-		else:
-			assert False, "Check for step " + conclusionID + " failed!"
+		assert False, "Couldn't parse line " + str(linenumber) + ". Aborting"
 
-	assert sanityCounter == 1, "Line " + str(linenumber) + " doesn't represent a valid inference. Aborting"
+	print("Checked " + str(checkedInferenceCounter) + " inferences, everything is fine!")
 
-print("Checked " + str(checkedInferenceCounter) + " inferences, everything is fine!")
-
+main()
 

@@ -71,7 +71,6 @@ def encodeValidityOfStep(header, step, numberToConclusion):
 		assert premiseID in numberToConclusion, "There is no step with ID " + str(premiseID)
 		string += "(assert " + numberToConclusion[premiseID] + " )\n"
 	string += "(assert-not " + step.conclusion + " )\n"
-	print(string)
 	return string
 
 def prove(encoding):

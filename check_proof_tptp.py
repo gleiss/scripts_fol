@@ -1,4 +1,4 @@
-# This script checks whether the given proof is correct.
+# This script checks whether the given tptp proof is correct.
 # Use the same format for writing proofs as Vampire's output, 
 # but use at the end of each line either
 # 	[axiom] for all axioms of the proof
